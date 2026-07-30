@@ -310,6 +310,46 @@ nd6_process_autoconfig_prefix(struct netif *netif,
 #endif /* LWIP_IPV6_AUTOCONFIG */
 
 /**
+ * Return a pointer to the first instance of a specific ICMP option in a pbuf,
+ * starting from a specific offset.
+ *
+ * @param p the nd packet, p->payload pointing to the icmpv6 header
+ * @param offset the byte offset for the start of icmpv6 options
+ * @param wanted_type the option type to search for
+ * @return A pointer into p->payload where the option starts,
+ * or NULL if option is not found, option was not fully inside p->payload,
+ * or a zero-length option was found.
+ */
+static void *
+nd6_find_option(struct pbuf *p, int offset, int wanted_type)
+{
+  while ((p->tot_len - offset) >= 2) {
+    u8_t option_type;
+    u16_t option_len;
+    int option_len8 = pbuf_try_get_at(p, offset + 1);
+    if (option_len8 <= 0) {
+      break;
+    }
+    option_len = ((u8_t)option_len8) << 3;
+    option_type = pbuf_get_at(p, offset);
+    if (p->len >= (offset + option_len) && option_type == wanted_type) {
+      return ((u8_t*)p->payload + offset);
+    }
+    offset += option_len;
+  }
+  return NULL;
+}
+
+static void
+nd6_store_neighbor_lladdr(struct nd6_neighbor_cache_entry *entry,
+                          struct lladdr_option *opt, struct netif *netif)
+{
+  u16_t copy_len = LWIP_MIN((opt->length << 3) - ND6_LLADDR_OPTION_MIN_LENGTH,
+                            netif->hwaddr_len);
+  SMEMCPY(entry->lladdr, opt->addr, LWIP_MIN(copy_len, NETIF_MAX_HWADDR_LEN));
+}
+
+/**
  * Process an incoming neighbor discovery message
  *
  * @param p the nd packet, p->payload pointing to the icmpv6 header
@@ -404,7 +444,7 @@ nd6_input(struct pbuf *p, struct netif *inp)
       i = nd6_find_neighbor_cache_entry(&target_address);
       if (i >= 0) {
         if (na_hdr->flags & ND6_FLAG_OVERRIDE) {
-          MEMCPY(neighbor_cache[i].lladdr, lladdr_opt->addr, inp->hwaddr_len);
+          nd6_store_neighbor_lladdr(&neighbor_cache[i], lladdr_opt, inp);
         }
       }
     } else {
@@ -423,9 +463,10 @@ nd6_input(struct pbuf *p, struct netif *inp)
       /* Update cache entry. */
       if ((na_hdr->flags & ND6_FLAG_OVERRIDE) ||
           (neighbor_cache[i].state == ND6_INCOMPLETE)) {
-        /* Check that link-layer address option also fits in packet. */
-        if (p->len < (sizeof(struct na_header) + 2)) {
-          /* @todo debug message */
+        lladdr_opt = (struct lladdr_option *)
+          nd6_find_option(p, sizeof(*na_hdr), ND6_OPTION_TYPE_TARGET_LLADDR);
+        if (!lladdr_opt) {
+          /* Missing target lladdr option, or did not fully fit inside p */
           pbuf_free(p);
           ND6_STATS_INC(nd6.lenerr);
           ND6_STATS_INC(nd6.drop);
@@ -552,7 +593,7 @@ nd6_input(struct pbuf *p, struct netif *inp)
         /* We already have a record for the solicitor. */
         if (neighbor_cache[i].state == ND6_INCOMPLETE) {
           neighbor_cache[i].netif = inp;
-          MEMCPY(neighbor_cache[i].lladdr, lladdr_opt->addr, inp->hwaddr_len);
+          nd6_store_neighbor_lladdr(&neighbor_cache[i], lladdr_opt, inp);
 
           /* Delay probe in case we get confirmation of reachability from upper layer (TCP). */
           neighbor_cache[i].state = ND6_DELAY;
@@ -571,7 +612,7 @@ nd6_input(struct pbuf *p, struct netif *inp)
           return;
         }
         neighbor_cache[i].netif = inp;
-        MEMCPY(neighbor_cache[i].lladdr, lladdr_opt->addr, inp->hwaddr_len);
+        nd6_store_neighbor_lladdr(&neighbor_cache[i], lladdr_opt, inp);
         ip6_addr_set(&(neighbor_cache[i].next_hop_address), ip6_current_src_addr());
 
         /* Receiving a message does not prove reachability: only in one direction.
@@ -760,7 +801,7 @@ nd6_input(struct pbuf *p, struct netif *inp)
          * unsolicited NA, RA, etc., it should be updated and its state set to STALE. */
         if ((route_list[i].neighbor_entry != NULL) &&
             (route_list[i].neighbor_entry->state == ND6_INCOMPLETE)) {
-          SMEMCPY(route_list[i].neighbor_entry->lladdr, lladdr_opt->addr, inp->hwaddr_len);
+          nd6_store_neighbor_lladdr(route_list[i].neighbor_entry, lladdr_opt, inp);
           route_list[i].neighbor_entry->state = ND6_REACHABLE;
           route_list[i].neighbor_entry->counter.reachable_time = reachable_time;
         }
@@ -999,29 +1040,27 @@ nd6_input(struct pbuf *p, struct netif *inp)
 
     /* If Link-layer address of other router is given, try to add to neighbor cache. */
     if (lladdr_opt != NULL) {
-      if (lladdr_opt->type == ND6_OPTION_TYPE_TARGET_LLADDR) {
-        i = nd6_find_neighbor_cache_entry(&target_address);
-        if (i < 0) {
-          i = nd6_new_neighbor_cache_entry();
-          if (i >= 0) {
-            neighbor_cache[i].netif = inp;
-            MEMCPY(neighbor_cache[i].lladdr, lladdr_opt->addr, inp->hwaddr_len);
-            ip6_addr_copy(neighbor_cache[i].next_hop_address, target_address);
-
-            /* Receiving a message does not prove reachability: only in one direction.
-             * Delay probe in case we get confirmation of reachability from upper layer (TCP). */
-            neighbor_cache[i].state = ND6_DELAY;
-            neighbor_cache[i].counter.delay_time = LWIP_ND6_DELAY_FIRST_PROBE_TIME / ND6_TMR_INTERVAL;
-          }
-        }
+      i = nd6_find_neighbor_cache_entry(&target_address);
+      if (i < 0) {
+        i = nd6_new_neighbor_cache_entry();
         if (i >= 0) {
-          if (neighbor_cache[i].state == ND6_INCOMPLETE) {
-            MEMCPY(neighbor_cache[i].lladdr, lladdr_opt->addr, inp->hwaddr_len);
-            /* Receiving a message does not prove reachability: only in one direction.
-             * Delay probe in case we get confirmation of reachability from upper layer (TCP). */
-            neighbor_cache[i].state = ND6_DELAY;
-            neighbor_cache[i].counter.delay_time = LWIP_ND6_DELAY_FIRST_PROBE_TIME / ND6_TMR_INTERVAL;
-          }
+          neighbor_cache[i].netif = inp;
+          nd6_store_neighbor_lladdr(&neighbor_cache[i], lladdr_opt, inp);
+          ip6_addr_copy(neighbor_cache[i].next_hop_address, target_address);
+
+          /* Receiving a message does not prove reachability: only in one direction.
+            * Delay probe in case we get confirmation of reachability from upper layer (TCP). */
+          neighbor_cache[i].state = ND6_DELAY;
+          neighbor_cache[i].counter.delay_time = LWIP_ND6_DELAY_FIRST_PROBE_TIME / ND6_TMR_INTERVAL;
+        }
+      }
+      if (i >= 0) {
+        if (neighbor_cache[i].state == ND6_INCOMPLETE) {
+          nd6_store_neighbor_lladdr(&neighbor_cache[i], lladdr_opt, inp);
+          /* Receiving a message does not prove reachability: only in one direction.
+            * Delay probe in case we get confirmation of reachability from upper layer (TCP). */
+          neighbor_cache[i].state = ND6_DELAY;
+          neighbor_cache[i].counter.delay_time = LWIP_ND6_DELAY_FIRST_PROBE_TIME / ND6_TMR_INTERVAL;
         }
       }
     }
@@ -1284,11 +1323,11 @@ nd6_tmr(void)
 #endif /* LWIP_IPV6_SEND_ROUTER_SOLICIT */
 
 #if LWIP_IPV6_SEND_ROUTER_ADVERTISE
-  /*   When a netif is up, ra will be sent LWIP_ND6_MAX_INITIAL_RA times 
+  /*   When a netif is up, ra will be sent LWIP_ND6_MAX_INITIAL_RA times
            after every LWIP_ND6_INITIAL_RA_INTERVAL seconds,
 	   then, each ra will be sent after every LWIP_ND6_NORMAL_RA_INTERVAL seconds.
 	   The procedure of ra sending is in nd6_tmr which is called every 1 seconds.
-	   RFC4861 suggests random ra interval to reduce the probability 
+	   RFC4861 suggests random ra interval to reduce the probability
 	   of synchronization with ra from other routers on the same link.
 	   In our case, there is only one router on one link, so random is unnecessary.
    */
@@ -1669,7 +1708,7 @@ nd6_send_ra(struct netif *netif, ip6_addr_t *target_addr)
   ra_hdr->retrans_timer = 0;  		/* 0 means unspecified, used by address resolution and nbr unreach detect */
 
   prefix_opt = (struct prefix_option *)((u8_t *)p->payload + sizeof(struct ra_header));
-  
+
   prefix_opt->type = ND6_OPTION_TYPE_PREFIX_INFO;
   prefix_opt->length = 4;			/* in units of 8 byte, so 32 byte */
   prefix_opt->prefix_length = 64;	/* prefix length */
@@ -1713,7 +1752,7 @@ nd6_send_ra(struct netif *netif, ip6_addr_t *target_addr)
   /* Send the packet out. */
   ND6_STATS_INC(nd6.xmit);
 
-  err = ip6_output_if(p, src_addr, (target_addr == NULL) ? &multicast_address : target_addr, 
+  err = ip6_output_if(p, src_addr, (target_addr == NULL) ? &multicast_address : target_addr,
   	  LWIP_ICMP6_HL, 0, IP6_NEXTH_ICMP6, netif);
   pbuf_free(p);
 
