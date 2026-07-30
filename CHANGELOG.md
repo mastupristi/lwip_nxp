@@ -3,7 +3,7 @@
 This file documents the changes and additions made in the NXP fork of lwIP.
 For the list of changes in the upstream project version which this fork is based on, see [CHANGELOG](CHANGELOG).
 
-Source code included in this SDK is currently based on development version 2.2.1 taken from 3rd party lwIP GIT repository.
+Source code included in this SDK is currently based on development version 2.2.2 taken from 3rd party lwIP GIT repository.
 The webpage https://git.savannah.nongnu.org/cgit/lwip.git allows to browse that repository and also contains URLs for its cloning.
 
 The development versions (X.Y.Z.dev) do not refer to a single source code snapshots.
@@ -11,7 +11,18 @@ To avoid ambiguity, change log below contains SHA-1 hashes of GIT commits used w
 
 KSDK refers to Kinetis SDK, the predecessor of MCUXpresso SDK.
 
-## 2.2.1_rev12 (newest)
+## 2.2.2_rev1 (newest)
+### New features:
+- Synced to upstream lwIP master (2026-06-16, SHA-1: 3d896ba0a37ff3ce73270ca5e230707fe47f60e3) to MCUXpresso SDK.
+### Bug fixes:
+- snmpv3: fixed handling of packets with invalid msgAuthenticationParameters length in snmp_parse_inbound_frame (stack-based buffer overflow / DoS; BDSA, MCUX-89594 / upstream commit 0c957ec0).
+- tcp_in: added bounds check for next TCP option byte.
+- nd6: parse all IPv6 ND options instead of only the first.
+- mdns: fixed copying of invalid search result domains.
+- smtp: fixed server-driven AUTH line overflow into tx_buf.
+- ip4_frag/ip6_frag: fixed potential NULL-pointer access on memory errors.
+
+## 2.2.1_rev12
 ### Bug fixes:
 - Fixed uninitialized chg_report_tmr in mld6_get_or_alloc_data,
   this could cause the MLDv6 report to be sent after a long time.
