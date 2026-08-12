@@ -1086,10 +1086,11 @@ if MCUX_COMPONENT_middleware.lwip
                 config LWIP_ENET_FLEXIBLE_CONFIGURATION
                     bool "LWIP_ENET_FLEXIBLE_CONFIGURATION"
                     default n
-                    depends on MCUX_COMPONENT_middleware.lwip.kinetis_ethernetif
+                    depends on MCUX_COMPONENT_middleware.lwip.kinetis_ethernetif || MCUX_COMPONENT_middleware.lwip.enet_ethernetif
                     help
                         No prefix in generated macro
                         Call BOARD_ENETFlexibleConfigure function.
+
 
                 config ETH_ENET_QOS_MII_MODE
                     string "ETH_ENET_QOS_MII_MODE"

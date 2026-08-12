@@ -490,6 +490,16 @@ void ethernetif_plat_init(struct netif *netif,
     config.miiMode        = ETH_ENET_QOS_MII_MODE;
 #endif
 
+#ifdef LWIP_ENET_FLEXIBLE_CONFIGURATION
+    /* Optional board-level fix-up of the ENET_QOS configuration before Init.
+     * ENET_QOS_GetDefaultConfig() returns RGMII defaults (miiSpeed = 1000M,
+     * miiDuplex = full). On boards wired for RMII the 1000M value is invalid.
+     * A board that needs a different speed/duplex/mode provides
+     * BOARD_ENETFlexibleConfigure() to override the relevant fields here. */
+    extern void BOARD_ENETFlexibleConfigure(enet_qos_config_t *config);
+    BOARD_ENETFlexibleConfigure(&config);
+#endif
+
 #if (CHECKSUM_CHECK_IP == 0) || (CHECKSUM_CHECK_TCP == 0) || (CHECKSUM_CHECK_UDP == 0) || \
     (CHECKSUM_CHECK_ICMP == 0) || (CHECKSUM_CHECK_ICMP6 == 0)
     config.specialControl |= kENET_QOS_RxChecksumOffloadEnable;
