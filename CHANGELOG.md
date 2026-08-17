@@ -11,7 +11,11 @@ To avoid ambiguity, change log below contains SHA-1 hashes of GIT commits used w
 
 KSDK refers to Kinetis SDK, the predecessor of MCUXpresso SDK.
 
-## 2.2.2_rev1 (newest)
+## 2.2.2_rev2 (newest)
+### New features:
+- Added support for LWIP_ENET_FLEXIBLE_CONFIGURATION in enet_ethernetif_qos to allow changing 'enet_qos_config_t' struct.
+
+## 2.2.2_rev1
 ### New features:
 - Synced to upstream lwIP master (2026-06-16, SHA-1: 3d896ba0a37ff3ce73270ca5e230707fe47f60e3) to MCUXpresso SDK.
 ### Bug fixes:
