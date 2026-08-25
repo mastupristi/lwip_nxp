@@ -32,7 +32,7 @@
 
 /*
  * Copyright (c) 2013-2016, Freescale Semiconductor, Inc.
- * Copyright 2016-2025 NXP
+ * Copyright 2016-2026 NXP
  * All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
@@ -490,14 +490,14 @@ void ethernetif_plat_init(struct netif *netif,
     config.miiMode        = ETH_ENET_QOS_MII_MODE;
 #endif
 
-#ifdef LWIP_ENET_FLEXIBLE_CONFIGURATION
+#ifdef LWIP_ENET_QOS_FLEXIBLE_CONFIGURATION
     /* Optional board-level fix-up of the ENET_QOS configuration before Init.
      * ENET_QOS_GetDefaultConfig() returns RGMII defaults (miiSpeed = 1000M,
      * miiDuplex = full). On boards wired for RMII the 1000M value is invalid.
      * A board that needs a different speed/duplex/mode provides
-     * BOARD_ENETFlexibleConfigure() to override the relevant fields here. */
-    extern void BOARD_ENETFlexibleConfigure(enet_qos_config_t *config);
-    BOARD_ENETFlexibleConfigure(&config);
+     * BOARD_ENETQOSFlexibleConfigure() to override the relevant fields here. */
+    extern void BOARD_ENETQOSFlexibleConfigure(enet_qos_config_t *config);
+    BOARD_ENETQOSFlexibleConfigure(&config);
 #endif
 
 #if (CHECKSUM_CHECK_IP == 0) || (CHECKSUM_CHECK_TCP == 0) || (CHECKSUM_CHECK_UDP == 0) || \

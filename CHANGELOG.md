@@ -13,7 +13,7 @@ KSDK refers to Kinetis SDK, the predecessor of MCUXpresso SDK.
 
 ## 2.2.2_rev2 (newest)
 ### New features:
-- Added support for LWIP_ENET_FLEXIBLE_CONFIGURATION in enet_ethernetif_qos to allow changing 'enet_qos_config_t' struct.
+- Added support for LWIP_ENET_QOS_FLEXIBLE_CONFIGURATION in enet_ethernetif_qos to allow changing 'enet_qos_config_t' struct.
 
 ## 2.2.2_rev1
 ### New features:
