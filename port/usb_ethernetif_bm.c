@@ -419,9 +419,16 @@ void USB_HostCdcEcmTask(void *param, uint32_t *task_event)
             {
                 ecmInstance->runPrevState = ecmInstance->runCurState;
                 ecmInstance->runCurState  = USB_HostCdcEcmRunIdle;
+                uint16_t macStringDescLength = ((usb_descriptor_common_t *)(&macStringDescBuffer[0]))->bLength;
+                /* bLength comes from the device; clamp it so the second request cannot write past
+                 * the fixed-size macStringDescBuffer. */
+                if (macStringDescLength > CDC_ECM_STRING_MAC_BUFFER_LEN)
+                {
+                    macStringDescLength = CDC_ECM_STRING_MAC_BUFFER_LEN;
+                }
                 if (USB_HostCdcEcmGetMacStringDescriptor(
                         ecmInstance->classHandle, ethernetNetworkingDesc->iMACAddress, 0x0409U, &macStringDescBuffer[0],
-                        (uint16_t)(((usb_descriptor_common_t *)(&macStringDescBuffer[0]))->bLength),
+                        macStringDescLength,
                         USB_HostCdcEcmControlCallback, ecmInstance) != kStatus_USB_Success)
                 {
                     usb_echo("Get string (index %d) descriptor transfer error.\r\n",
@@ -673,20 +680,29 @@ static void USB_HostCdcRndisDataInCallback(void *param, uint8_t *data, uint32_t 
         if ((dataLength > 0) && (NULL != data))
         {
             rndis_packet_msg_struct_t *temp = (rndis_packet_msg_struct_t *)data;
-            pbuf                            = pbuf_alloc(PBUF_RAW, (u16_t)temp->dataLength, PBUF_POOL);
-            if (pbuf)
+            /* dataOffset/dataLength come from the device; bound them against the bytes actually
+             * received in this transfer (relative to &temp->dataOffset) and against the fixed-size
+             * dataBuffer before they drive the pbuf allocation and memcpy below. */
+            if ((dataLength >= RNDIS_DAT_MSG_HEADER_SIZE) &&
+                (temp->dataOffset <= (dataLength - 8U)) &&
+                (temp->dataLength <= ((dataLength - 8U) - temp->dataOffset)) &&
+                (temp->dataLength <= RNDIS_FRAME_MAX_FRAMELEN))
             {
-                temp->dataBuffer[temp->dataLength] = 0;
-                pbuf->tot_len                      = (u16_t)temp->dataLength;
-                pbuf->len                          = (u16_t)temp->dataLength;
-
-                uint8_t *p = (uint8_t *)(&temp->dataOffset);
-                memcpy(pbuf->payload, (p + temp->dataOffset), temp->dataLength);
-                /*in special case, when polling out packet, in packet maybe
-                 * finihsed, the in packet will be not be handled*/
-                if (!rndisInstance->pollingInSending)
+                pbuf = pbuf_alloc(PBUF_RAW, (u16_t)temp->dataLength, PBUF_POOL);
+                if (pbuf)
                 {
-                    netif->input(pbuf, netif);
+                    temp->dataBuffer[temp->dataLength] = 0;
+                    pbuf->tot_len                      = (u16_t)temp->dataLength;
+                    pbuf->len                          = (u16_t)temp->dataLength;
+
+                    uint8_t *p = (uint8_t *)(&temp->dataOffset);
+                    memcpy(pbuf->payload, (p + temp->dataOffset), temp->dataLength);
+                    /*in special case, when polling out packet, in packet maybe
+                     * finihsed, the in packet will be not be handled*/
+                    if (!rndisInstance->pollingInSending)
+                    {
+                        netif->input(pbuf, netif);
+                    }
                 }
             }
         }
@@ -1375,11 +1391,12 @@ err_t USB_EthernetIfIgmpMacFilter(struct netif *netif, const ip4_addr_t *group, 
     {
         case NETIF_DEL_MAC_FILTER:
 #if defined(USB_HOST_CONFIG_CDC_ECM) && USB_HOST_CONFIG_CDC_ECM
-            if (usedFilters-- == 0)
+            if (usedFilters == 0)
             {
                 usb_echo("MAC filter is none and cannot delete entry.\r\n");
                 return ERR_IF;
             }
+            usedFilters--;
 
             for (int i = 0; i < usedFilters + 1; i++)
             {
@@ -1402,11 +1419,12 @@ err_t USB_EthernetIfIgmpMacFilter(struct netif *netif, const ip4_addr_t *group, 
 
         case NETIF_ADD_MAC_FILTER:
 #if defined(USB_HOST_CONFIG_CDC_ECM) && USB_HOST_CONFIG_CDC_ECM
-            if (usedFilters++ == CDC_ECM_MAX_SUPPORT_MULTICAST_FILTERS)
+            if (usedFilters >= CDC_ECM_MAX_SUPPORT_MULTICAST_FILTERS)
             {
                 usb_echo("MAC filter is full and cannot add entry.\r\n");
                 return ERR_IF;
             }
+            usedFilters++;
 
             for (int i = 0; i < usedFilters; i++)
             {
