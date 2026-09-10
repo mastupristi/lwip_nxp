@@ -86,9 +86,13 @@ USB_HostCdcEcmInstance_t g_HostCdcEcmInstance = {0};
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) uint8_t g_OutPutBuffer[CDC_ECM_DATA_BUFFER_LEN];
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) uint8_t g_InPutBuffer[CDC_ECM_DATA_BUFFER_LEN];
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE) uint8_t g_NotifyBuffer[CDC_ECM_NOTIFY_BUFFER_LEN];
-uint8_t g_requestParamBuffer[CDC_ECM_REQUEST_BUFFER_LEN] = {0};
-USB_HostCdcEcmRequestParam_t *g_requestParam =
-    (USB_HostCdcEcmRequestParam_t *)(&g_HostCdcEcmInstance.requestParamBuffer);
+/* Storage for the class-specific request parameters. g_requestParam used to be pointed at
+ * &g_HostCdcEcmInstance.requestParamBuffer, which is the address of that void * field itself rather
+ * than of the buffer it refers to, so it only covered 4 of the union's 8 bytes and writing any
+ * member wider than the field would have reached into the neighbouring instance members. Give it
+ * storage that has the union's own size and alignment. */
+USB_HostCdcEcmRequestParam_t g_requestParamBuffer = {0};
+USB_HostCdcEcmRequestParam_t *g_requestParam      = &g_requestParamBuffer;
 static struct pbuf *s_pbufReceived = NULL;
 #elif defined(USB_HOST_CONFIG_CDC_RNDIS) && USB_HOST_CONFIG_CDC_RNDIS
 usb_host_rndis_instance_struct_t g_RndisInstance = {0};
@@ -1316,7 +1320,7 @@ static void USB_HostApplicationInit(uint8_t controllerId, struct netif *netif)
     g_HostCdcEcmInstance.dataRecvBuffer             = &g_InPutBuffer[0];
     g_HostCdcEcmInstance.dataSendBuffer             = &g_OutPutBuffer[0];
     g_HostCdcEcmInstance.notifyBuffer               = &g_NotifyBuffer[0];
-    g_HostCdcEcmInstance.requestParamBuffer         = &g_requestParamBuffer[0];
+    g_HostCdcEcmInstance.requestParamBuffer         = &g_requestParamBuffer;
     g_HostCdcEcmInstance.deviceNetworkConnection    = 0;
     g_HostCdcEcmInstance.deviceNetworkDownLinkSpeed = 0;
     g_HostCdcEcmInstance.deviceNetworkUpLinkSpeed   = 0;
