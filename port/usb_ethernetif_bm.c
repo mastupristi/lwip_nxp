@@ -834,7 +834,16 @@ static void USB_HostCdcRndisControlCallback(void *param, uint8_t *data, uint32_t
             rndisInstance->runState = kUSB_HostCdcRndisRunWaitGetMACAddress;
 
             rndis_query_cmplt_struct_t *msg = (rndis_query_cmplt_struct_t *)data;
-            if (REMOTE_NDIS_QUERY_CMPLT == msg->messageType)
+            /* The response header fields come from the device; validate them against the bytes
+             * actually received before using informationBufferOffset as a pointer offset.
+             * informationBufferOffset is relative to requestID (8 bytes into the message) and
+             * messageLength is what delimits the message, so it bounds the read. Rejecting a
+             * messageLength larger than dataLength keeps that bound within the received bytes. */
+            if ((NULL != data) && (dataLength >= sizeof(rndis_query_cmplt_struct_t)) &&
+                (REMOTE_NDIS_QUERY_CMPLT == msg->messageType) && (msg->messageLength <= dataLength) &&
+                (msg->messageLength >= (8U + sizeof(uint16_t))) &&
+                (msg->informationBufferLength >= sizeof(uint16_t)) &&
+                (msg->informationBufferOffset <= (msg->messageLength - 8U - sizeof(uint16_t))))
             {
                 netif->mtu =
                     USB_SHORT_FROM_LITTLE_ENDIAN_ADDRESS(((uint8_t *)&msg->requestID + msg->informationBufferOffset));
@@ -853,7 +862,18 @@ static void USB_HostCdcRndisControlCallback(void *param, uint8_t *data, uint32_t
 
             netif->hwaddr_len = NETIF_MAX_HWADDR_LEN;
 
-            memcpy(netif->hwaddr, (((uint8_t *)&msg->requestID + msg->informationBufferOffset)), NETIF_MAX_HWADDR_LEN);
+            /* Validate the device-supplied response header the same way as the MTU query above
+             * before copying from informationBufferOffset; skip the copy rather than reading from
+             * an unvalidated offset, leaving the address for the caller to handle. */
+            if ((NULL != data) && (dataLength >= sizeof(rndis_query_cmplt_struct_t)) &&
+                (REMOTE_NDIS_QUERY_CMPLT == msg->messageType) && (msg->messageLength <= dataLength) &&
+                (msg->messageLength >= (8U + NETIF_MAX_HWADDR_LEN)) &&
+                (msg->informationBufferLength >= NETIF_MAX_HWADDR_LEN) &&
+                (msg->informationBufferOffset <= (msg->messageLength - 8U - NETIF_MAX_HWADDR_LEN)))
+            {
+                memcpy(netif->hwaddr, (((uint8_t *)&msg->requestID + msg->informationBufferOffset)),
+                       NETIF_MAX_HWADDR_LEN);
+            }
         }
         else if (rndisInstance->previousRunState == kUSB_HostCdcRndisRunWaitSetMsgDone)
         {
