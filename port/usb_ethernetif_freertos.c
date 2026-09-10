@@ -404,7 +404,20 @@ void USB_HostCdcEcmTask(void *param, uint32_t *task_event)
             {
                 ecmInstance->runPrevState = ecmInstance->runCurState;
                 ecmInstance->runCurState  = USB_HostCdcEcmRunIdle;
-                USB_HostCdcGetEcmDescriptor(ecmInstance->classHandle, NULL, NULL, &ethernetNetworkingDesc);
+                /* USB_HostCdcGetEcmDescriptor() writes the out parameter only when it finds an
+                 * Ethernet Networking functional descriptor of at least 13 bytes, and the pointer is
+                 * static. A device that omits that descriptor, or declares a shorter one, would
+                 * otherwise leave it NULL on the first attach and pointing into the previous device's
+                 * released descriptor buffer on a re-attach. Clear it first and use it only if this
+                 * call actually filled it in, so the reads below cannot pull the interface
+                 * configuration out of freed or unrelated memory. */
+                ethernetNetworkingDesc = NULL;
+                (void)USB_HostCdcGetEcmDescriptor(ecmInstance->classHandle, NULL, NULL, &ethernetNetworkingDesc);
+                if (NULL == ethernetNetworkingDesc)
+                {
+                    usb_echo("No valid CDC-ECM Ethernet Networking functional descriptor.\r\n");
+                    break;
+                }
                 ecmInstance->deviceEthernetStatisticsBitmap =
                     *((uint32_t *)ethernetNetworkingDesc->bmEthernetStatistics);
                 ecmInstance->deviceMaxSegmentSize = *((uint16_t *)ethernetNetworkingDesc->wMaxSegmentSize);
