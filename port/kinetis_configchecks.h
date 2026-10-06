@@ -48,6 +48,20 @@
     "ETH_USE_RX_PAYLOAD_CHECKSUM needs the enhanced buffer descriptors: define ENET_ENHANCEDBUFFERDESCRIPTOR_MODE."
 #endif
 
+#if ETH_USE_RX_IP_HEADER_CHECK && !defined(ENET_ENHANCEDBUFFERDESCRIPTOR_MODE)
+#error \
+    "ETH_USE_RX_IP_HEADER_CHECK needs the enhanced buffer descriptors: define ENET_ENHANCEDBUFFERDESCRIPTOR_MODE."
+#endif
+
+#if ETH_USE_RX_IP_HEADER_CHECK && !defined(ENET_BUFFDESCRIPTOR_RX_BDU_MASK)
+#error \
+    "ETH_USE_RX_IP_HEADER_CHECK needs an ENET driver that reports ipFlags and bduDone in enet_rx_frame_attribute_t."
+#endif
+
+#if ETH_USE_RX_IP_HEADER_CHECK && CHECKSUM_CHECK_IP
+#error "ETH_USE_RX_IP_HEADER_CHECK replaces the software check of lwIP: set CHECKSUM_CHECK_IP to 0."
+#endif
+
 #if ETH_USE_RX_PAYLOAD_CHECKSUM && !defined(ENET_BUFFDESCRIPTOR_RX_BDU_MASK)
 #error \
     "ETH_USE_RX_PAYLOAD_CHECKSUM needs an ENET driver that reports payloadChecksum, ipFlags and bduDone " \

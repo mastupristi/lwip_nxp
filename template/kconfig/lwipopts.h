@@ -337,6 +337,10 @@ LWIP_OPT_H_CODE_LINE_100
 #define ETH_USE_RX_PAYLOAD_CHECKSUM 0
 #endif
 
+#ifndef ETH_USE_RX_IP_HEADER_CHECK
+#define ETH_USE_RX_IP_HEADER_CHECK 0
+#endif
+
 #if ETH_USE_RX_PAYLOAD_CHECKSUM
 /* Sum received payloads with the value computed by the MAC, see port/README.md. The software algorithm is still
  * needed for every other range: lwIP selects none by itself once LWIP_CHKSUM is overridden. */

@@ -74,6 +74,13 @@
 #define ETH_USE_RX_PAYLOAD_CHECKSUM 0
 #endif
 
+/* Check the IPv4 header of received frames with the result of the MAC instead of letting the MAC discard frames with
+ * a bad header (RACC[IPDIS]); frames the MAC did not verify are checked in software and dropped if bad. Supported by
+ * the ENET port only, needs ENET_ENHANCEDBUFFERDESCRIPTOR_MODE and CHECKSUM_CHECK_IP 0, see README.md. */
+#ifndef ETH_USE_RX_IP_HEADER_CHECK
+#define ETH_USE_RX_IP_HEADER_CHECK 0
+#endif
+
 #define ETHERNETIF_TIMEOUT (0xFFFU)
 
 #ifndef ETH_LINK_POLLING_INTERVAL_MS

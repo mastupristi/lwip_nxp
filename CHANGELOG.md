@@ -16,6 +16,8 @@ KSDK refers to Kinetis SDK, the predecessor of MCUXpresso SDK.
 - Added support for LWIP_ENET_QOS_FLEXIBLE_CONFIGURATION in enet_ethernetif_qos to allow changing 'enet_qos_config_t' struct.
 - ENET adaptation layer: New option ETH_USE_RX_PAYLOAD_CHECKSUM which lets lwIP use the sum of the received IP payload
   computed by the MAC instead of reading the payload again. Needs ENET_ENHANCEDBUFFERDESCRIPTOR_MODE, see port/README.md.
+- ENET adaptation layer: New option ETH_USE_RX_IP_HEADER_CHECK which checks the IPv4 header of received frames with the
+  result of the MAC instead of letting the MAC discard them, see port/README.md.
 
 ## 2.2.2_rev1
 ### New features:

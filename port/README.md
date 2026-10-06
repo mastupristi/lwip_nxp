@@ -75,6 +75,21 @@ Requirements:
 Only frames with an Ethernet header followed by an IPv4 header without options are handled; the checksum of
 anything else is computed in software as usual.
 
+## Checking the IPv4 header with the result of the MAC
+With `CHECKSUM_CHECK_IP` set to 0 the port lets the MAC discard received frames whose IPv4 header checksum is wrong
+(`RACC[IPDIS]`) and lwIP does not check headers. The MAC does not discard frames with less than 3 bytes of IP
+payload: it flags them as header errors whether their header is right or not, so nobody checks them, and a wrong
+header on the last fragment of, for example, a 1473-byte UDP datagram is accepted. The discarded frames are not
+counted by lwIP either.
+With `ETH_USE_RX_IP_HEADER_CHECK` set to 1 the MAC does not discard anything: the port trusts the MAC's check for
+frames it verified (IPv4 without options, descriptor completed, no header checksum error) and checks every other
+IPv4 frame in software, dropping it and counting it in `ip.chkerr` if its header is wrong. lwIP does not check the
+header again, which saves reading it for every received frame.
+
+Requirements:
+- Only the ENET port (`enet_ethernetif_kinetis.c`) supports it.
+- `ENET_ENHANCEDBUFFERDESCRIPTOR_MODE` must be defined, and `CHECKSUM_CHECK_IP` must be 0.
+
 ## Helper functions
 If your application needs to wait for the link to become up you can use one of
 the following functions:

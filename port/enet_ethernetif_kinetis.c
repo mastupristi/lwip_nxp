@@ -42,6 +42,7 @@
 #include "lwip/def.h"
 #include "lwip/ethip6.h"
 #include "lwip/igmp.h"
+#include "lwip/inet_chksum.h"
 #include "lwip/ip4.h"
 #include "lwip/prot/ip.h"
 #include "lwip/mem.h"
@@ -389,28 +390,20 @@ static void ethernetif_rx_payload_chksum_add_instance(struct ethernetif *etherne
     }
 }
 
-/* Records the sum reported by the MAC for a frame received in the buffer wrapped by wrapper. */
+/*
+ * Records the sum reported by the MAC for a frame received in the buffer wrapped by wrapper. Called only for frames
+ * the MAC parsed and verified as IPv4 without options (see ethernetif_rx_frame_to_pbufs()): the payload starts at a
+ * fixed offset and the descriptor carries a valid sum.
+ */
 static void ethernetif_rx_payload_chksum_store(rx_pbuf_wrapper_t *wrapper, const enet_rx_frame_struct_t *rxFrame)
 {
-    const u8_t *frame = (const u8_t *)wrapper->buffer;
-    const struct eth_hdr *ethhdr = (const struct eth_hdr *)frame;
-    const struct ip_hdr *iphdr   = (const struct ip_hdr *)(frame + SIZEOF_ETH_HDR);
+    const u8_t *frame          = (const u8_t *)wrapper->buffer;
+    const struct ip_hdr *iphdr = (const struct ip_hdr *)(frame + SIZEOF_ETH_HDR);
     u16_t ipLen;
     u32_t sum;
 
     wrapper->chksumValid = false;
 
-    /* Only Ethernet + IPv4 without options: that is where the payload starts at a fixed offset. */
-    if ((ethhdr->type != PP_HTONS(ETHTYPE_IP)) || (IPH_V(iphdr) != 4) || (IPH_HL(iphdr) != (IP_HLEN / 4)))
-    {
-        return;
-    }
-    /* The MAC does not provide a sum if it has not finished the descriptor or found the frame invalid. */
-    if (!rxFrame->rxAttribute.bduDone ||
-        (0U != (rxFrame->rxAttribute.ipFlags & ENET_BUFFDESCRIPTOR_RX_IPHEADCHECKSUM_MASK)))
-    {
-        return;
-    }
     /* The IP total length, not the frame length, tells what was summed: the frame may carry padding. */
     ipLen = lwip_ntohs(IPH_LEN(iphdr));
     if ((ipLen <= IP_HLEN) || ((SIZEOF_ETH_HDR + ipLen) > rxFrame->totLen))
@@ -651,7 +644,7 @@ void ethernetif_plat_init(struct netif *netif,
 #if (CHECKSUM_GEN_TCP == 0) && (CHECKSUM_GEN_UDP == 0) && (CHECKSUM_GEN_ICMP == 0)
     config.txAccelerConfig |= kENET_TxAccelProtoCheckEnabled;
 #endif
-#if (CHECKSUM_CHECK_IP == 0)
+#if (CHECKSUM_CHECK_IP == 0) && !ETH_USE_RX_IP_HEADER_CHECK
     config.rxAccelerConfig |= kENET_RxAccelIpCheckEnabled;
     config.macSpecialConfig &= ~(kENET_ControlStoreAndFwdDisable);
 #endif
@@ -779,7 +772,28 @@ static void ethernetif_rx_release(struct pbuf *p)
     ethernetif_rx_free(ethernetif->base, wrapper->buffer, netif, 0);
 }
 
-/** Wraps received buffer(s) into a pbuf or a pbuf chain and returns it. */
+#if ETH_USE_RX_IP_HEADER_CHECK
+/*
+ * Software check of an IPv4 header that the MAC did not verify (see ETH_USE_RX_IP_HEADER_CHECK). Returns false only
+ * for a well-formed header with a wrong checksum: a header with another version or an impossible length is left to
+ * ip4_input(), which drops it on its own checks.
+ */
+static bool ethernetif_rx_ip_header_ok(const u8_t *iphdr, u8_t versionAndLength, u16_t availableLen)
+{
+    u16_t headerLen = (u16_t)((versionAndLength & 0x0FU) * 4U);
+
+    if (((versionAndLength >> 4) != 4U) || (headerLen < IP_HLEN) || (headerLen > availableLen))
+    {
+        return true;
+    }
+    return (inet_chksum(iphdr, headerLen) == 0U);
+}
+#endif /* ETH_USE_RX_IP_HEADER_CHECK */
+
+/**
+ * Wraps received buffer(s) into a pbuf or a pbuf chain and returns it. Returns NULL if the frame was dropped because
+ * of a bad IPv4 header (ETH_USE_RX_IP_HEADER_CHECK).
+ */
 static struct pbuf *ethernetif_rx_frame_to_pbufs(struct ethernetif *ethernetif, enet_rx_frame_struct_t *rxFrame)
 {
     void *buffer;
@@ -835,13 +849,41 @@ static struct pbuf *ethernetif_rx_frame_to_pbufs(struct ethernetif *ethernetif, 
 
     LINK_STATS_INC(link.recv);
 
-#if ETH_USE_RX_PAYLOAD_CHECKSUM
-    /* Only single buffer frames: the descriptor results are those of the last buffer of a frame. */
-    if (p->next == NULL)
+#if ETH_USE_RX_PAYLOAD_CHECKSUM || ETH_USE_RX_IP_HEADER_CHECK
     {
-        ethernetif_rx_payload_chksum_store(wrapper, rxFrame);
+        /* The frame is in non-cacheable memory: the header bytes both options need are read once, here. */
+        const u8_t *frame  = (const u8_t *)p->payload;
+        bool isIpv4        = (p->len >= (SIZEOF_ETH_HDR + IP_HLEN)) &&
+                      (((const struct eth_hdr *)frame)->type == PP_HTONS(ETHTYPE_IP));
+        u8_t versionAndLen = isIpv4 ? frame[SIZEOF_ETH_HDR] : 0U;
+        /* The MAC verified the header and summed the payload only for version 4 without options, once it finished
+         * the descriptor (BDU) and found no header checksum error (ICE). It also flags ICE on valid frames with less
+         * than 3 bytes of IP payload, which is why ICE frames are checked again in software. */
+        bool macVerified = isIpv4 && (versionAndLen == 0x45U) && rxFrame->rxAttribute.bduDone &&
+                           (0U == (rxFrame->rxAttribute.ipFlags & ENET_BUFFDESCRIPTOR_RX_IPHEADCHECKSUM_MASK));
+
+#if ETH_USE_RX_IP_HEADER_CHECK
+        if (isIpv4 && !macVerified &&
+            !ethernetif_rx_ip_header_ok(frame + SIZEOF_ETH_HDR, versionAndLen, (u16_t)(p->len - SIZEOF_ETH_HDR)))
+        {
+            /* Counted like ip4_input() counts a bad header, so lwIP statistics keep showing them. */
+            ethernetif_pbuf_free_safe(p);
+            IP_STATS_INC(ip.chkerr);
+            IP_STATS_INC(ip.drop);
+            MIB2_STATS_INC(mib2.ipinhdrerrors);
+            return NULL;
+        }
+#endif /* ETH_USE_RX_IP_HEADER_CHECK */
+
+#if ETH_USE_RX_PAYLOAD_CHECKSUM
+        /* Only single buffer frames: the descriptor results are those of the last buffer of a frame. */
+        if (macVerified && (p->next == NULL))
+        {
+            ethernetif_rx_payload_chksum_store(wrapper, rxFrame);
+        }
+#endif /* ETH_USE_RX_PAYLOAD_CHECKSUM */
     }
-#endif
+#endif /* ETH_USE_RX_PAYLOAD_CHECKSUM || ETH_USE_RX_IP_HEADER_CHECK */
 
     return p;
 }
@@ -854,38 +896,43 @@ struct pbuf *ethernetif_linkinput(struct netif *netif)
     struct pbuf *p                                      = NULL;
     status_t status;
 
-    /* Read frame. */
-    status = ENET_GetRxFrame(ethernetif->base, &ethernetif->handle, &rxFrame, 0);
-
-    switch (status)
+    /* A frame dropped for a bad IPv4 header gives NULL with kStatus_Success: read the next one, because NULL
+     * tells the caller that no more frames are available. */
+    do
     {
-        case kStatus_Success:
-            /* Frame read, process it into pbufs. */
-            p = ethernetif_rx_frame_to_pbufs(ethernetif, &rxFrame);
-            break;
+        /* Read frame. */
+        status = ENET_GetRxFrame(ethernetif->base, &ethernetif->handle, &rxFrame, 0);
 
-        case kStatus_ENET_RxFrameEmpty:
-            /* Frame not available. */
-            break;
+        switch (status)
+        {
+            case kStatus_Success:
+                /* Frame read, process it into pbufs. */
+                p = ethernetif_rx_frame_to_pbufs(ethernetif, &rxFrame);
+                break;
 
-        case kStatus_ENET_RxFrameError:
-            /* Error receiving frame */
-            LWIP_DEBUGF(NETIF_DEBUG, ("ethernetif_linkinput: RxFrameError\n"));
-            LINK_STATS_INC(link.drop);
-            MIB2_STATS_NETIF_INC(netif, ifindiscards);
-            break;
+            case kStatus_ENET_RxFrameEmpty:
+                /* Frame not available. */
+                break;
 
-        case kStatus_ENET_RxFrameDrop:
-            /* Frame received, but it had to be dropped
-             * because new buffer(s) allocation failed in the ENET driver. */
-            LINK_STATS_INC(link.drop);
-            MIB2_STATS_NETIF_INC(netif, ifindiscards);
-            break;
+            case kStatus_ENET_RxFrameError:
+                /* Error receiving frame */
+                LWIP_DEBUGF(NETIF_DEBUG, ("ethernetif_linkinput: RxFrameError\n"));
+                LINK_STATS_INC(link.drop);
+                MIB2_STATS_NETIF_INC(netif, ifindiscards);
+                break;
 
-        default:
-            LWIP_ASSERT("Unhandled return value.", 0);
-            break;
-    }
+            case kStatus_ENET_RxFrameDrop:
+                /* Frame received, but it had to be dropped
+                 * because new buffer(s) allocation failed in the ENET driver. */
+                LINK_STATS_INC(link.drop);
+                MIB2_STATS_NETIF_INC(netif, ifindiscards);
+                break;
+
+            default:
+                LWIP_ASSERT("Unhandled return value.", 0);
+                break;
+        }
+    } while ((p == NULL) && (status == kStatus_Success));
 
     return p;
 }
